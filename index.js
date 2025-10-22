@@ -30,7 +30,9 @@ const connectDB = async () => {
       console.error("❌ MONGODB_URI is not defined");
       return;
     }
+
     console.log("🔗 Attempting MongoDB connection...");
+    console.log(MONGODB_URI);
 
     await mongoose.connect(MONGODB_URI, {
       useNewUrlParser: true,
