@@ -17,6 +17,7 @@ pids
 *.pid
 *.seed
 *.pid.lock
+bun.lockb
 
 # OS-specific files
 .DS_Store
