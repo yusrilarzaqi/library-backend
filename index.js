@@ -20,21 +20,63 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
+// MongoDB Connection dengan optimizations untuk Vercel
+const MONGODB_URI = process.env.MONGODB_URI;
+
+// Database connection
+const connectDB = async () => {
+  try {
+    if (!MONGODB_URI) {
+      console.error("❌ MONGODB_URI is not defined");
+      return;
+    }
+    console.log("🔗 Attempting MongoDB connection...");
+
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+
+    console.log("✅ MongoDB connected successfully");
+
+    mongoose.connection.on("error", (err) => {
+      console.error("❌ MongoDB connection error:", err);
+    });
+
+    mongoose.connection.on("disconnected", () => {
+      console.log("⚠️ MongoDB disconnected");
+    });
+  } catch (error) {
+    console.error("❌ MongoDB connection failed:", error.message);
+  }
+};
+
 // Health check endpoint
 app.get("/api/health", (req, res) => {
+  const dbStatus = mongoose.connection.readyState;
+  const dbStatusText =
+    {
+      0: "disconnected",
+      1: "connected",
+      2: "connecting",
+      3: "disconnecting",
+    }[dbStatus] || "unknown";
+
   res.status(200).json({
     status: "OK",
     timestamp: new Date().toISOString(),
+    database: dbStatusText,
     environment: process.env.NODE_ENV || "development",
-    nodeVersion: process.version,
   });
 });
-
 // Simple test endpoint
 app.get("/api/test", (req, res) => {
   res.json({
-    message: "Server is working!",
-    timestamp: new Date().toISOString(),
+    message: "API is responding!",
+    database:
+      mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
   });
 });
 
@@ -86,37 +128,6 @@ app.use((error, req, res, next) => {
     error: process.env.NODE_ENV === "production" ? {} : error.message,
   });
 });
-
-// Database connection
-const connectDB = async () => {
-  try {
-    const MONGODB_URI = process.env.MONGODB_URI;
-
-    if (!MONGODB_URI) {
-      throw new Error("MONGODB_URI environment variable is not defined");
-    }
-    console.log("🔗 Attempting MongoDB connection...");
-
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    });
-
-    console.log("✅ MongoDB connected successfully");
-
-    mongoose.connection.on("error", (err) => {
-      console.error("❌ MongoDB connection error:", err);
-    });
-
-    mongoose.connection.on("disconnected", () => {
-      console.log("⚠️ MongoDB disconnected");
-    });
-  } catch (error) {
-    console.error("❌ MongoDB connection failed:", error.message);
-  }
-};
 
 const startServer = async () => {
   try {
