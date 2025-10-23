@@ -7,17 +7,9 @@ const cloudinary = require("cloudinary").v2;
 exports.createBook = async (req, res) => {
   try {
     const { nomor, judul, level, penulis, kodeJudul, kodePenulis } = req.body;
-    const coverImage = req.file ? req.file.filename : null;
+    const coverImage = req.file ? req.file.path : "";
 
-    if (
-      !nomor ||
-      !judul ||
-      !level ||
-      !penulis ||
-      !kodeJudul ||
-      !kodePenulis ||
-      !coverImage
-    ) {
+    if (!nomor || !judul || !level || !penulis || !kodeJudul || !kodePenulis) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
@@ -38,7 +30,7 @@ exports.createBook = async (req, res) => {
       penulis,
       kodeJudul,
       kodePenulis,
-      coverImage: req.file ? req.file.path : "", // Cloudinary URL
+      coverImage, // Cover image path
     });
 
     const savedData = await newData.save();
@@ -143,7 +135,7 @@ exports.getBookId = async (req, res) => {
     const { id } = req.params;
     const book = await Book.findById(id).populate(
       "borrowedBy",
-      "username email",
+      "username email avatar",
     );
 
     if (!book) {
@@ -153,11 +145,17 @@ exports.getBookId = async (req, res) => {
       });
     }
 
+    // Get borrowing due date
+    const dueDate = await BorrowedBook.findOne({
+      book: id,
+      status: "borrowed",
+    }).sort({ borrowedAt: -1 });
+
     // Get borrowing history for this book
     const borrowingHistory = await BorrowedBook.find({
       book: id,
     })
-      .populate("user", "username email")
+      .populate("user", "username email avatar")
       .sort({ borrowedAt: -1 })
       .limit(10);
 
@@ -176,6 +174,7 @@ exports.getBookId = async (req, res) => {
       data: {
         book,
         borrowingHistory,
+        dueDate,
       },
     });
   } catch (error) {
@@ -191,7 +190,6 @@ exports.getBookId = async (req, res) => {
 exports.updateBook = async (req, res) => {
   try {
     const book = await Book.findById(req.params.id);
-    console.log(req.file);
 
     if (!book) {
       if (req.file) {

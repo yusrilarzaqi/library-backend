@@ -43,12 +43,18 @@ exports.getDashboardStats = async (req, res) => {
         endDate.setDate(endDate.getDate() + 1);
     }
 
-    let borrowedQuery = {};
+    let borrowedQuery = { status: "borrowed" };
     let returnedQuery = { status: "returned" };
 
     if (startDate && endDate) {
       borrowedQuery.borrowedAt = { $gte: startDate, $lt: endDate };
       returnedQuery.borrowedAt = { $gte: startDate, $lt: endDate };
+    }
+
+    let chartQuery = {};
+
+    if (startDate && endDate) {
+      chartQuery.borrowedAt = { $gte: startDate, $lt: endDate };
     }
 
     // Get borrowed books stats
@@ -81,7 +87,7 @@ exports.getDashboardStats = async (req, res) => {
       // Daily data for line/bar chart
       dailyData = await BorrowedBook.aggregate([
         {
-          $match: borrowedQuery,
+          $match: chartQuery,
         },
         {
           $group: {
@@ -101,6 +107,9 @@ exports.getDashboardStats = async (req, res) => {
     } else {
       // for alltime range, get monthly data
       monthlyData = await BorrowedBook.aggregate([
+        {
+          $match: chartQuery,
+        },
         {
           $group: {
             _id: {
@@ -187,7 +196,7 @@ exports.getDashboardStats = async (req, res) => {
 };
 
 // Get available range
-exports.getRange = async (req, res) => {
+exports.getRange = async (_, res) => {
   try {
     const range = [
       { value: "today", label: "Hari ini" },
