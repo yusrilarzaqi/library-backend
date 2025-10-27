@@ -13,7 +13,7 @@ const generateToken = (id) => {
 // Register user
 exports.register = async (req, res) => {
   try {
-    const { username, email, password, role } = req.body;
+    const { username, email, password } = req.body;
 
     const userExists = await User.findOne({ email });
 
@@ -28,14 +28,17 @@ exports.register = async (req, res) => {
     }
 
     if (!username || !email || !password) {
-      return res.status(400).json({ message: "All fields are required" });
+      if (req.file) {
+        await cloudinary.uploader.destroy(req.file.filename);
+      }
+      return responseHelper.validationError(res);
     }
 
     const user = await User.create({
       username,
       email,
       password,
-      role,
+      role: "user",
       avatar: req.file ? req.file.path : "",
     });
 

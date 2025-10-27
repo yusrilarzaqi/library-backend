@@ -1,6 +1,7 @@
 const express = require("express");
 const User = require("../models/UserModel");
 const BorrowedBook = require("../models/BorrowedBook");
+const responseHelper = require("../utils/responseHelper");
 const cloudinary = require("cloudinary").v2;
 
 // get user
@@ -54,7 +55,7 @@ exports.getAllUsers = async (req, res) => {
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
-    const total = await User.countDocuments(query);
+    const total = await User.countDocuments();
 
     // Get user stats
     const totalAdmins = await User.countDocuments({ ...query, role: "admin" });
@@ -202,6 +203,44 @@ exports.updateUser = async (req, res) => {
   }
 };
 
+// post create user
+exports.createUser = async (req, res) => {
+  try {
+    const { username, email, password, role } = req.body;
+    const userExists = await User.findOne({ email });
+
+    if (userExists) {
+      if (req.file) {
+        await cloudinary.uploader.destroy(req.file.filename);
+      }
+      return responseHelper.error(res, "Email already exists", 400);
+    }
+
+    if (!username || !email || !password || !role) {
+      if (req.file) {
+        await cloudinary.uploader.destroy(req.file.filename);
+      }
+      return responseHelper.validationError(res, "All fields are required");
+    }
+
+    const user = await User.create({
+      username,
+      email,
+      password,
+      role,
+      avatar: req.file ? req.file.path : "",
+    });
+
+    responseHelper.success(res, "User created successfully", user);
+  } catch (error) {
+    if (req.file) {
+      await cloudinary.uploader.destroy(req.file.filename);
+    }
+
+    responseHelper.error(res, error.message, 500);
+  }
+};
+
 // delete user
 exports.deleteUser = async (req, res) => {
   try {
@@ -227,7 +266,17 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
+    // remove avatar after delete user
+    if (user.avatar) {
+      const publicId = user.avatar.split("/").pop().split(".")[0];
+      await cloudinary.uploader.destroy(`library-books/${publicId}`);
+    }
+
+    // remove borrowed books after delete user
+    await BorrowedBook.deleteMany({ user: req.params.id });
+
     await User.findByIdAndDelete(req.params.id);
+
     res.json({
       success: true,
       message: "User deleted successfully",

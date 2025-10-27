@@ -39,3 +39,6 @@ build/
 *.swo
 .vercel
 .env*.local
+
+# posting api client cli
+posting/

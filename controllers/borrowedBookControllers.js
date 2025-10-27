@@ -2,6 +2,19 @@ const express = require("express");
 const BorrowedBook = require("../models/BorrowedBook");
 const User = require("../models/UserModel");
 const Book = require("../models/BookModel");
+const responseHelper = require("../utils/responseHelper");
+
+// Helper function to check if user exists
+const checkUserExists = async (userId) => {
+  const user = await User.findById(userId);
+  return !!user;
+};
+
+// Helper function to check if book exists
+const checkBookExists = async (bookId) => {
+  const book = await Book.findById(bookId);
+  return !!book;
+};
 
 exports.getDashboardStats = async (req, res) => {
   try {
@@ -233,6 +246,10 @@ exports.getAllTransactions = async (req, res) => {
       dateTo,
     } = req.query;
 
+    // Validasi pagination
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+
     const query = {};
 
     // Filter by status
@@ -240,33 +257,47 @@ exports.getAllTransactions = async (req, res) => {
       query.status = status;
     }
 
+    console.log(status);
+
     // Filter by date range
     if (dateFrom || dateTo) {
       query.borrowedAt = {};
       if (dateFrom) {
-        query.borrowedAt.$gte = new Date(dateFrom);
+        const formDate = new Date(dateFrom);
+        if (isNaN(formDate.getTime())) {
+          return responseHelper.error(res, "Invalid date format", 400);
+        }
+        query.borrowedAt.$gte = formDate;
       }
+
       if (dateTo) {
-        query.borrowedAt.$lte = new Date(dateTo);
+        const toDate = new Date(dateTo);
+        if (isNaN(toDate.getTime())) {
+          return responseHelper.error(res, "Invalid date format", 400);
+        }
+        query.borrowedAt.$lte = toDate;
       }
     }
 
     // Search in book title, book number, or user username
-    if (search) {
+    if (search && search.trim() !== "") {
+      const searchRegex = { $regex: search.trim(), $options: "i" };
+
       const books = await Book.find({
         $or: [
-          { judul: { $regex: search, $options: "i" } },
-          { nomor: { $regex: search, $options: "i" } },
-          { penulis: { $regex: search, $options: "i" } },
+          { judul: searchRegex },
+          { nomor: searchRegex },
+          { kodeJudul: searchRegex },
         ],
-      }).select("_id");
+      })
+        .select("_id")
+        .lean();
 
       const users = await User.find({
-        $or: [
-          { username: { $regex: search, $options: "i" } },
-          { email: { $regex: search, $options: "i" } },
-        ],
-      }).select("_id");
+        $or: [{ username: searchRegex }, { email: searchRegex }],
+      })
+        .select("_id")
+        .lean();
 
       query.$or = [
         { book: { $in: books.map((b) => b._id) } },
@@ -274,49 +305,50 @@ exports.getAllTransactions = async (req, res) => {
       ];
     }
 
+    // Validasi sort field
+    const allowedSortFields = [
+      "borrowedAt",
+      "returnedAt",
+      "dueDate",
+      "createdAt",
+    ];
+    const finalSortBy = allowedSortFields.includes(sortBy)
+      ? sortBy
+      : "borrowedAt";
+
     const sort = {};
     sort[sortBy] = sortOrder === "asc" ? 1 : -1;
 
-    const transactions = await BorrowedBook.find(query)
-      .populate("book", "nomor judul level penulis kodeJudul kodePenulis")
-      .populate("user", "username email avatar")
-      .sort(sort)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const [transactions, total] = await Promise.all([
+      BorrowedBook.find(query)
+        .populate("book", "nomor judul level penulis kodeJudul kodePenulis")
+        .populate("user", "username email avatar")
+        .sort(sort)
+        .limit(limitNum)
+        .skip((pageNum - 1) * limitNum)
+        .lean(), // Gunakan lean() untuk performance
+      BorrowedBook.countDocuments(query),
+    ]);
 
-    const total = await BorrowedBook.countDocuments(query);
+    // Get stats secara parallel
+    const [totalBorrowed, totalReturned] = await Promise.all([
+      BorrowedBook.countDocuments({ status: "borrowed" }),
+      BorrowedBook.countDocuments({ status: "returned" }),
+    ]);
 
-    // Get stats for filter
-    const totalBorrowed = await BorrowedBook.countDocuments({
-      ...query,
-      status: "borrowed",
-    });
-    const totalReturned = await BorrowedBook.countDocuments({
-      ...query,
-      status: "returned",
-    });
-
-    res.json({
-      success: true,
+    return responseHelper.success(res, {
       data: transactions,
-      stats: {
-        total,
-        borrowed: totalBorrowed,
-        returned: totalReturned,
-      },
+      stats: { total, borrowed: totalBorrowed, returned: totalReturned },
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
+        currentPage: pageNum,
+        totalPage: Math.ceil(total / limitNum),
         totalItems: total,
-        itemsPerPage: parseInt(limit),
+        itemsPerPage: limitNum,
       },
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching transactions",
-      error: error.message,
-    });
+    console.error(error);
+    return responseHelper.error(res, "Error fetching transactions", 500);
   }
 };
 
@@ -333,6 +365,11 @@ exports.getBorrowedBooksByUserId = async (req, res) => {
       dateFrom,
       dateTo,
     } = req.query;
+
+    const userExists = await checkUserExists(req.params.id);
+    if (!userExists) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     const query = { user: req.params.id };
 
@@ -375,7 +412,10 @@ exports.getBorrowedBooksByUserId = async (req, res) => {
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
-    const total = await BorrowedBook.countDocuments(query);
+    const total = await BorrowedBook.countDocuments({
+      ...query,
+      status: "all",
+    });
 
     // Get stats for filter
     const totalBorrowed = await BorrowedBook.countDocuments({

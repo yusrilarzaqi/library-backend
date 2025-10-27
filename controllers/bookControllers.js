@@ -2,6 +2,7 @@ const express = require("express");
 const Book = require("../models/BookModel");
 const BorrowedBook = require("../models/BorrowedBook");
 const cloudinary = require("cloudinary").v2;
+const responseHelper = require("../utils/responseHelper");
 
 // Create data
 exports.createBook = async (req, res) => {
@@ -9,18 +10,35 @@ exports.createBook = async (req, res) => {
     const { nomor, judul, level, penulis, kodeJudul, kodePenulis } = req.body;
     const coverImage = req.file ? req.file.path : "";
 
-    if (!nomor || !judul || !level || !penulis || !kodeJudul || !kodePenulis) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
+    // Validasi required fields
+    const requiredFields = {
+      nomor,
+      judul,
+      level,
+      penulis,
+      kodeJudul,
+      kodePenulis,
+    };
+    const missingFields = Object.entries(requiredFields)
+      .filter(([key, value]) => !value)
+      .map(([key]) => key);
 
-    if (await Book.findOne({ nomor })) {
+    if (missingFields.length > 0) {
       if (req.file) {
         await cloudinary.uploader.destroy(req.file.filename);
       }
-      return res.status(400).json({
-        success: false,
-        message: "Book number already exists",
+      return responseHelper.validationError(res, {
+        message: `Missing required fields: ${missingFields.join(", ")}`,
       });
+    }
+
+    // Check duplicate book number
+    const existingBook = await Book.findOne({ nomor });
+    if (existingBook) {
+      if (req.file) {
+        await cloudinary.uploader.destroy(req.file.filename);
+      }
+      return responseHelper.error(res, "Book number already exist", 400);
     }
 
     const newData = new Book({
@@ -40,9 +58,14 @@ exports.createBook = async (req, res) => {
       await cloudinary.uploader.destroy(req.file.filename);
     }
     if (error.code === 11000) {
-      return res.status(400).json({ message: "Book already exists" });
+      return responseHelper.error(res, "Book already exists", 400);
     }
-    res.status(500).json({ status: false, message: error.message });
+    if (error.name === "ValidationError") {
+      const errors = Object.values(error.errors).map((err) => err.message);
+      return responseHelper.validationError(res, errors);
+    }
+
+    return responseHelper.error(res, "Internal server error", 500);
   }
 };
 
@@ -57,6 +80,7 @@ exports.getAllBooks = async (req, res) => {
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;
+    console.log(search);
 
     const query = {};
 
@@ -89,7 +113,7 @@ exports.getAllBooks = async (req, res) => {
       .skip((page - 1) * limit)
       .collation({ locale: "en", numericOrdering: true });
 
-    const total = await Book.countDocuments(query);
+    const total = await Book.countDocuments();
 
     // Get book stats
     const totalAvailable = await Book.countDocuments({
@@ -257,7 +281,7 @@ exports.deleteBook = async (req, res) => {
     if (book.status === "borrowed") {
       return res.status(400).json({
         success: false,
-        message: "Cannot delete borrowed book",
+        message: "Tidak boleh menghapus buku yang sedang dipinjam",
       });
     }
 
@@ -268,6 +292,7 @@ exports.deleteBook = async (req, res) => {
     }
 
     await Book.findByIdAndDelete(req.params.id);
+    await BorrowedBook.deleteMany({ book: req.params.id });
 
     res.json({
       success: true,
